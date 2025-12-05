@@ -1,0 +1,23 @@
+pkgbase = dystopian-crypto
+	pkgdesc = Cryptographic helper tools for certificate and key management
+	pkgver = 0.1.0
+	pkgrel = 1
+	url = https://github.com/Dystopian-Project/dystopian-crypto
+	install = dystopian-crypto.install
+	arch = x86_64
+	license = MIT
+	depends = dystopian-libs
+	depends = openssl
+	depends = gnupg
+	provides = dystopian-crypto
+	conflicts = dystopian-crypto
+	source = dystopian-crypto
+	source = data.json
+	validpgpkeys = 14A71FEDA1F764F7075FFA40FF64D67D0F00DD12
+	validpgpkeys = C71C37EA17233736B9FAD43EFAD24DA0784D363A
+	sha512sums = 50fd7df0037c82ef116f3e5bdc439fe6a6e7d27edd5b18db0fe83b9f39c4ca622e0db51d2bb33e36e874bf7eb8cf10155a4dd14e8e3a2a13a47af36e6991fa6e
+	sha512sums = f265f2fbeb76cb25f816b567010057c90f8ec56149e0ac58074ed8e63fd39faba3e451806422583153845cddec7ea3d2987617fa88b276cf57784ba4a1ef5656
+	b2sums = 7fa1c6b0989ac76bbcf393ccba1a15c6cda79d5836a40e00713b4be31de1fba73bae5ad4800c2bcece1ff95522d9c413524c978357b9f528881566c74ab95da4
+	b2sums = 6d250c81dae2f6eab26e99222fb31cce6a30f9e4330f7b7c03d0b166d03eff07c856acf55de42527dfedcdb08bf42bf3db2367f115a7f4a6df150d188f02dc78
+
+pkgname = dystopian-crypto

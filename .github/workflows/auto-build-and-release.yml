@@ -1,0 +1,209 @@
+# .github/workflows/auto-build-and-release.yml
+name: Matrix Build & Release All Packages
+
+on:
+  push:
+    branches: [ main ]
+    paths: ['**/*.PKGBUILD', '.gitmodules']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Manual version (e.g. 2025.12)'
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  # ── 1. Detect packages + version + GPG key ─────────────────────────────────────
+  detect-packages:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.detect.outputs.matrix }}
+      version: ${{ steps.version.outputs.version }}
+      gpg_home: ${{ steps.gpg.outputs.gpg_home }}
+      key_id: ${{ steps.gpg.outputs.key_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Import GPG key (once, reused everywhere)
+        uses: DCx7C5/import-gpg-key@v3
+        id: gpg
+        with: { from_secrets: true }
+
+      - name: Set version
+        id: version
+        run: |
+          if [[ -n "${{ inputs.version }}" ]]; then
+            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            YEAR=$(date +%Y)
+            COUNT=$(git tag --list "v$YEAR.*" | wc -l)
+            echo "version=$YEAR.$((COUNT + 1))" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Detect changed packages (or all on manual)
+        id: detect
+        run: |
+          set -euo pipefail
+          PREV="${{ github.event.before }}"
+          [[ "$PREV" == "0"* || -z "$PREV" ]] && PREV="4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+          if [[ -n "${{ inputs.version }}" ]]; then
+            mapfile -t dirs < <(find . -name PKGBUILD -exec dirname {} \; | sort -u)
+          else
+            mapfile -t dirs < <(git diff --name-only "$PREV" HEAD | grep -E '\.PKGBUILD$' | xargs -n1 dirname | sort -u)
+          fi
+
+          [[ ${#dirs[@]} -eq 0 ]] && { echo "matrix={\"include\":[]}"; exit 0; }
+
+          MATRIX=$(jq -nc --argjson arr "$(printf '%s\n' "${dirs[@]}" | jq -R . | jq -s .)" \
+            '{include: $arr | map({package: .})}')
+          echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
+
+  # ── 2. Parallel matrix builds (fastest possible) ─────────────────────────────────
+  build-package:
+    needs: detect-packages
+    if: needs.detect-packages.outputs.matrix != '{"include":[]}'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      matrix: ${{ fromJson(needs.detect-packages.outputs.matrix) }}
+      max-parallel: 6
+      fail-fast: false
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # Shared pacman cache — biggest speed win
+      - name: Cache pacman packages
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/pacman/pkg
+          key: pacman-${{ runner.os }}-${{ hashFiles('**/PKGBUILD') }}
+          restore-keys: pacman-${{ runner.os }}-
+
+      # Per-package ccache — compile-heavy packages become instant
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-${{ runner.os }}-${{ matrix.package }}-${{ hashFiles(format('{0}/PKGBUILD', matrix.package)) }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ matrix.package }}-
+            ccache-${{ runner.os }}-
+
+      # Copy GPG keys into workspace (Docker actions can't mount arbitrary paths)
+      - name: Prepare GPG directory
+        run: |
+          mkdir -p .gnupg
+          cp -r "${{ needs.detect-packages.outputs.gpg_home }}"/* .gnupg/ 2>/dev/null || true
+          chmod 700 .gnupg
+
+      - name: Build ${{ matrix.package }}
+        uses: DCx7C5/run-arch-cmd@v1
+        with:
+          dir: /github/workspace
+          run: |
+            set -euo pipefail
+            pacman -Syu --noconfirm --needed base-devel git ccache
+
+            export CCACHE_DIR=/github/workspace/.ccache
+            export GNUPGHOME=/github/workspace/.gnupg
+
+            cd "${{ matrix.package }}"
+            makepkg --printsrcinfo > .SRCINFO
+            extra-x86_64-build -- -fcrs --sign
+
+            mkdir -p /github/workspace/repo
+            cp -v *.pkg.tar.zst* /github/workspace/repo/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pkg-${{ matrix.package }}
+          path: repo/*.pkg.tar.zst*
+          retention-days: 1
+
+  # ── 3. Finalize: DB, tag, release, push ───────────────────────────────────────
+  finalize-release:
+    needs: [detect-packages, build-package]
+    if: needs.detect-packages.outputs.matrix != '{"include":[]}'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Download all packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pkg-*
+          path: repo
+          merge-multiple: true
+
+      - name: Import GPG key again
+        uses: DCx7C5/import-gpg-key@v3
+        id: gpg
+        with: { from_secrets: true }
+
+      - name: Prepare GPG for Docker
+        run: |
+          mkdir -p .gnupg
+          cp -r "${{ steps.gpg.outputs.gpg_home }}"/* .gnupg/ 2>/dev/null || true
+          chmod 700 .gnupg
+
+      - name: Create signed repository database
+        uses: DCx7C5/run-arch-cmd@v1
+        with:
+          run: |
+            cd /github/workspace/repo
+            repo-add --sign --key "${{ steps.gpg.outputs.key_id }}" \
+              dystopian-repo.db.tar.gz *.pkg.tar.zst
+
+      - name: Create signed git tag
+        uses: DCx7C5/create-and-push-tag@v2
+        with:
+          version: ${{ needs.detect-packages.outputs.version }}
+          gpg_home: ${{ steps.gpg.outputs.gpg_home }}
+
+      - name: Create release assets
+        uses: DCx7C5/create-asset-signatures@v2
+        with:
+          gpg_home: ${{ steps.gpg.outputs.gpg_home }}
+          tag: v${{ needs.detect-packages.outputs.version }}
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.detect-packages.outputs.version }}
+          name: Dystopian Repository v${{ needs.detect-packages.outputs.version }}
+          files: |
+            repo/*
+            *.tar.gz
+            *.sha512
+            *.sig
+
+      - name: Commit back repo + .SRCINFO
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add repo/ **/.SRCINFO
+          git commit -m "ci: release v${{ needs.detect-packages.outputs.version }}" || echo "Nothing to commit"
+          git push origin main
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./repo
+          force_orphan: true
+
+      # Clean history = smaller repo

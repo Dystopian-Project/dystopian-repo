@@ -30,10 +30,11 @@ jobs:
           submodules: recursive
 
       - name: Import GPG key (once, reused everywhere)
-        uses: DCx7C5/import-gpg-key@v1
+        uses: DCx7C5/import-gpg-key@v2
         id: gpg
         with:
-          from_secrets: true
+          enc_gpg: ${{ secrets.GPG_PACKAGER_KEY }}
+          pass: ${{ secrets.GPG_PACKAGER_PASSPHRASE }}
 
       - name: Set version
         id: version
@@ -150,10 +151,12 @@ jobs:
           merge-multiple: true
 
       - name: Import GPG key again
-        uses: DCx7C5/import-gpg-key@v3
+        uses: DCx7C5/import-gpg-key@v2
         id: gpg
         with:
-          from_secrets: true
+          enc_gpg: ${{ secrets.GPG_PACKAGER_KEY }}
+          pass: ${{ secrets.GPG_PACKAGER_PASSPHRASE }}
+
 
       - name: Prepare GPG for Docker
         run: |

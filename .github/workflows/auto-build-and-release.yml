@@ -1,4 +1,3 @@
-# .github/workflows/auto-build-and-release.yml
 name: Matrix Build & Release All Packages
 
 on:
@@ -31,7 +30,7 @@ jobs:
           submodules: recursive
 
       - name: Import GPG key (once, reused everywhere)
-        uses: DCx7C5/import-gpg-key@v5
+        uses: DCx7C5/import-gpg-key@v1
         id: gpg
         with:
           from_secrets: true

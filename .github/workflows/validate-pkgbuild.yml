@@ -1,0 +1,38 @@
+name: Secure PKGBUILD Validation
+
+on:
+  pull_request:
+    paths: ['**/*.PKGBUILD', '.gitmodules']
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: '${{ github.token }}'
+
+      - name: Audit PKGBUILDs
+        uses: DCx7C5/run-arch-cmd@v1
+        with:
+          run: |
+            pacman -Syu --noconfirm base-devel namcap python-pip
+            pip install --break-system-packages pkgbuild-security || true
+            mapfile -t dirs < <(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -E '/PKGBUILD$' | xargs -n1 dirname | sort -u)
+            FAILED=(); for dir in "${dirs[@]}"; do cd "$dir"; namcap PKGBUILD || true; pkgbuild-security check PKGBUILD || FAILED+=("$dir"); grep -E "(curl|wget).*\|.*(bash|sh)" PKGBUILD && FAILED+=("$dir (curl|bash)"); grep -E "rm -rf|dd if=" PKGBUILD && FAILED+=("$dir (destructive)"); makepkg --printsrcinfo > .SRCINFO; cd -; done
+            [ ${#FAILED[@]} -gt 0 ] && { printf "Failed: %s\n" "${FAILED[@]}"; exit 1; } || echo "Passed!"
+
+      - name: Auto-fix .SRCINFO
+        run: |
+          git config user.name "github-actions[bot]"; git config user.email "github-actions@users.noreply.github.com"
+          git add **/.SRCINFO; git commit -m "Update .SRCINFO" || exit 0; git push origin HEAD:${{ github.head_ref }}
+
+      - name: Notify Telegram on Failure
+        if: failure()
+        uses: DCx7C5/telegram-notify-action@main
+        with:
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          to: ${{ secrets.TELEGRAM_TO }}
+          message: "PR validation failed for ${{ github.sha }}"

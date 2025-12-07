@@ -152,7 +152,8 @@ jobs:
       - name: Import GPG key again
         uses: DCx7C5/import-gpg-key@v3
         id: gpg
-        with: { from_secrets: true }
+        with:
+          from_secrets: true
 
       - name: Prepare GPG for Docker
         run: |
@@ -161,7 +162,7 @@ jobs:
           chmod 700 .gnupg
 
       - name: Create signed repository database
-        uses: DCx7C5/run-arch-cmd@v1
+        uses: DCx7C5/run-arch-cmd@v3
         with:
           run: |
             cd /github/workspace/repo

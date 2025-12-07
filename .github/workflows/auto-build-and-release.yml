@@ -31,9 +31,10 @@ jobs:
           submodules: recursive
 
       - name: Import GPG key (once, reused everywhere)
-        uses: DCx7C5/import-gpg-key@v3
+        uses: DCx7C5/import-gpg-key@v5
         id: gpg
-        with: { from_secrets: true }
+        with:
+          from_secrets: true
 
       - name: Set version
         id: version
@@ -164,6 +165,7 @@ jobs:
       - name: Create signed repository database
         uses: DCx7C5/run-arch-cmd@v3
         with:
+          gpg_home: ${{ steps.gpg.outputs.gpg_home }}
           run: |
             cd /github/workspace/repo
             repo-add --sign --key "${{ steps.gpg.outputs.key_id }}" \
